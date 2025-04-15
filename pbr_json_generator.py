@@ -165,10 +165,7 @@ class ModSelectionDialog(QDialog):
         all_checked = self.select_all_checkbox.isChecked()
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
-            if all_checked:
-                item.setCheckState(CHECKED)
-            else:
-                item.setCheckState(UNCHECKED)
+            item.setCheckState(CHECKED if all_checked else UNCHECKED)
     def get_selected_mods(self):
         selected_mods = []
         for i in range(self.list_widget.count()):
@@ -191,7 +188,7 @@ class PBRJsonGenerator(mobase.IPluginTool):
     def author(self):
         return "Bottle"
     def description(self):
-        return "Generates JSON configs into PBR JSON Output/[ModName]/PBRNifPatcher folders."
+        return "Generates JSON configs into PBR JSON Output/[ModName]/PBRNifPatcher folders, single pass."
     def version(self):
         return mobase.VersionInfo(1, 0, 0, mobase.ReleaseType.FINAL)
     def isActive(self):
@@ -201,7 +198,7 @@ class PBRJsonGenerator(mobase.IPluginTool):
     def displayName(self):
         return "PBR Json Generator"
     def tooltip(self):
-        return "Scans Textures/PBR, then places JSON in a PBR JSON Output mod folder."
+        return "Scans Textures/PBR once, building JSON with fuzz/glow/coat in the same pass."
     def icon(self):
         return QIcon()
     def setParentWidget(self, widget):
@@ -253,68 +250,45 @@ class PBRJsonGenerator(mobase.IPluginTool):
                     relative_path = dds_file.relative_to(mod_pbr_folder)
                     parent_folder = output_folder / relative_path.parent
                     parent_folder.mkdir(parents=True, exist_ok=True)
-                    stem = dds_file.stem.replace("_rmaos", "")
-                    final_path = relative_path.parent / stem
+                    base_name = dds_file.stem.replace("_rmaos", "")
+                    final_path = relative_path.parent / base_name
                     texture_str = str(final_path).replace('/', '\\')
-                    new_json = parent_folder / f"{stem}.json"
-                    with open(new_json, "w", encoding="utf-8") as f:
-                        json.dump([
-                            {
-                                "texture": texture_str,
-                                "emissive": False,
-                                "parallax": True,
-                                "subsurface_foliage": False,
-                                "subsurface": False,
-                                "specular_level": 0.04,
-                                "subsurface_color": [1, 1, 1],
-                                "roughness_scale": 1,
-                                "subsurface_opacity": 1,
-                                "smooth_angle": 75,
-                                "displacement_scale": 1
-                            }
-                        ], f, indent=4)
-                    overall_log.append(f"Created: {new_json}")
-                for json_file in output_folder.rglob("*.json"):
-                    base_name = json_file.stem
-                    rmaos_candidates = list(mod_pbr_folder.rglob(f"{base_name}_rmaos.dds"))
-                    if not rmaos_candidates:
-                        continue
-                    rel_path = rmaos_candidates[0].relative_to(mod_pbr_folder)
-                    new_stem = rmaos_candidates[0].stem.replace("_rmaos", "")
-                    final_path = rel_path.parent / new_stem
-                    full_texture_path = str(final_path).replace('/', '\\')
-                    checks = {
-                        "glow": any(mod_pbr_folder.rglob(f"{base_name}_g.dds")),
-                        "fuzz": any(mod_pbr_folder.rglob(f"{base_name}_f.dds")),
-                        "parallax": any(mod_pbr_folder.rglob(f"{base_name}_p.dds")),
-                        "subsurface": any(mod_pbr_folder.rglob(f"{base_name}_s.dds")),
-                        "cnr": any(mod_pbr_folder.rglob(f"{base_name}_cnr.dds")),
+
+                    glow_exists = (dds_file.parent / f"{base_name}_g.dds").exists()
+                    fuzz_exists = (dds_file.parent / f"{base_name}_f.dds").exists()
+                    parallax_exists = (dds_file.parent / f"{base_name}_p.dds").exists()
+                    subsurface_exists = (dds_file.parent / f"{base_name}_s.dds").exists()
+                    cnr_exists = (dds_file.parent / f"{base_name}_cnr.dds").exists()
+
+                    entry = {
+                        "texture": texture_str,
+                        "emissive": glow_exists,
+                        "parallax": parallax_exists,
+                        "subsurface": subsurface_exists,
+                        "subsurface_foliage": False,
+                        "specular_level": 0.04,
+                        "subsurface_color": [1, 1, 1],
+                        "roughness_scale": 1,
+                        "subsurface_opacity": 1,
+                        "smooth_angle": 75,
+                        "displacement_scale": 1
                     }
-                    try:
-                        with open(json_file, "r", encoding="utf-8") as r:
-                            data = json.load(r)
-                        if not isinstance(data, list) or not data:
-                            data = [{}]
-                        obj = data[0]
-                        if checks["fuzz"]:
-                            obj["fuzz"] = {"texture": True}
-                        elif checks["subsurface"] and checks["cnr"]:
-                            obj["multilayer"] = True
-                            obj["coat_diffuse"] = True
-                            obj["coat_normal"] = True
-                            obj["coat_parallax"] = True
-                            obj["coat_strength"] = 1.0
-                            obj["coat_roughness"] = 1.0
-                            obj["coat_specular_level"] = 0.018
-                        obj["emissive"] = checks["glow"]
-                        obj["parallax"] = checks["parallax"]
-                        obj["subsurface"] = checks["subsurface"]
-                        obj["texture"] = full_texture_path
-                        with open(json_file, "w", encoding="utf-8") as w:
-                            json.dump(data, w, indent=4)
-                        overall_log.append(f"Updated: {json_file}")
-                    except Exception as write_error:
-                        overall_log.append(f"Failed to update {json_file}: {write_error}")
+
+                    if fuzz_exists:
+                        entry["fuzz"] = {"texture": True}
+                    elif subsurface_exists and cnr_exists:
+                        entry["multilayer"] = True
+                        entry["coat_diffuse"] = True
+                        entry["coat_normal"] = True
+                        entry["coat_parallax"] = True
+                        entry["coat_strength"] = 1.0
+                        entry["coat_roughness"] = 1.0
+                        entry["coat_specular_level"] = 0.018
+
+                    new_json = parent_folder / f"{base_name}.json"
+                    with open(new_json, "w", encoding="utf-8") as f:
+                        json.dump([entry], f, indent=4)
+                    overall_log.append(f"Created: {new_json}")
             QMessageBox.information(
                 self.__parent_widget,
                 "PBR Json Generator",
