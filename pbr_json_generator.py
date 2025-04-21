@@ -238,7 +238,7 @@ class PBRNifPatcherSelectionDialog(QDialog):
         self.select_all_checkbox.clicked.connect(self.handle_select_all)
         layout.addWidget(self.select_all_checkbox)
 
-        self.rename_checkbox = QCheckBox("Enable rename)")
+        self.rename_checkbox = QCheckBox("Enable rename")
         layout.addWidget(self.rename_checkbox)
 
         self.list_widget = QListWidget(self)
@@ -384,6 +384,7 @@ class PBRJsonGenerator(mobase.IPluginTool):
                         f.write("category=0\n")
 
                 total_entries_updated = 0
+                total_entries_copied = 0
                 total_jsons_processed = 0
                 mods_processed = 0
                 for mod_folder in selected_mods:
@@ -413,36 +414,44 @@ class PBRJsonGenerator(mobase.IPluginTool):
                             continue
 
                         entries_updated = 0
+                        entries_copied = 0
                         new_entries = []
                         for entry in entries_to_process:
                             if not (isinstance(entry, dict) and "texture" in entry):
+                                new_entries.append(entry)  # Copy non-standard entries as-is
+                                entries_copied += 1
                                 continue
                             texture_path = entry["texture"]
 
-                            dds_path = mod_pbr_folder / f"{texture_path}_rmaos.dds"
-                            if not dds_path.exists():
-                                dds_path = mod_pbr_folder / f"{texture_path.replace('\\', '/')}_rmaos.dds"
-                                if not dds_path.exists():
-                                    mod_log.append(f"Skipped texture {texture_path}: No _rmaos.dds file found")
-                                    continue
-                            relative_path = dds_path.relative_to(mod_pbr_folder)
-                            new_texture = str(relative_path.parent / relative_path.stem.replace("_rmaos", "")).replace('/', '\\')
+                            # Search for _rmaos.dds in Textures/PBR and all subfolders
+                            rmaos_found = False
+                            for dds_file in mod_pbr_folder.rglob(f"{texture_path.replace('\\', '/')}_rmaos.dds"):
+                                relative_path = dds_file.relative_to(mod_pbr_folder)
+                                new_texture = str(relative_path.parent / relative_path.stem.replace("_rmaos", "")).replace('/', '\\')
 
-                            new_entry = {}
-                            new_entry["texture"] = new_texture
-                            if rename_enabled and "_d" in new_texture:
-                                renamed_texture = new_texture.replace("_d", "")
-                                new_entry["rename"] = renamed_texture
-                                mod_log.append(f"Added rename field: {new_texture} → {renamed_texture}")
+                                new_entry = {}
+                                new_entry["texture"] = new_texture
+                                if rename_enabled and "_d" in new_texture:
+                                    renamed_texture = new_texture.replace("_d", "")
+                                    new_entry["rename"] = renamed_texture
+                                    mod_log.append(f"Added rename field: {new_texture} → {renamed_texture}")
 
-                            for key, value in entry.items():
-                                if key not in ["texture", "rename"]:
-                                    new_entry[key] = value
+                                for key, value in entry.items():
+                                    if key not in ["texture", "rename"]:
+                                        new_entry[key] = value
 
-                            new_entries.append(new_entry)
-                            entries_updated += 1
+                                new_entries.append(new_entry)
+                                entries_updated += 1
+                                rmaos_found = True
+                                break
 
-                        if entries_updated > 0:
+                            if not rmaos_found:
+                                # If no _rmaos.dds is found, copy the existing entry as-is
+                                new_entries.append(entry)
+                                entries_copied += 1
+                                mod_log.append(f"Copied unchanged texture entry: {texture_path} (No _rmaos.dds found)")
+
+                        if entries_updated > 0 or entries_copied > 0:
                             if isinstance(existing_data, dict) and "entries" in existing_data:
                                 existing_data["entries"] = new_entries
                             else:
@@ -453,6 +462,7 @@ class PBRJsonGenerator(mobase.IPluginTool):
                             with open(output_json_path, "w", encoding="utf-8") as f:
                                 json.dump(existing_data, f, indent=4)
                             total_entries_updated += entries_updated
+                            total_entries_copied += entries_copied
                             total_jsons_processed += 1
                             json_updated = True
                             mod_log.append(f"Updated texture path in: {output_json_path}")
@@ -464,7 +474,13 @@ class PBRJsonGenerator(mobase.IPluginTool):
                         with open(log_file, "w", encoding="utf-8") as f:
                             f.write("\n".join(mod_log))
 
-                log_message = f"Operation complete. Files processed: {total_jsons_processed}"
+                log_message = (
+                    f"Operation complete.\n"
+                    f"Mods processed: {mods_processed}\n"
+                    f"JSON files processed: {total_jsons_processed}\n"
+                    f"Entries updated: {total_entries_updated}\n"
+                    f"Entries copied unchanged: {total_entries_copied}"
+                )
                 QMessageBox.information(
                     self.__parent_widget,
                     "PBR Json Generator",
