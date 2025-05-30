@@ -1,2 +1,2 @@
 # PBR-JSON-Generator
-Generates PBR JSONs
+Mo2 Tool that generates PBR JSONs into an Output mod straight into your MO2 list.
