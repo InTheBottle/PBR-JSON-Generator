@@ -1,5 +1,5 @@
 # PBR-JSON-Generator
-MO2 tool for PBR JSON editing and creation, exported to a separate mod to prevent possible errors and does not touch existing jsons.
+MO2 tool for PBR JSON editing and creation, exported to a separate mod to prevent possible errors and does not touch existing jsons. Place the .py script into your mo2\plugins folder and run from mo2 tools dropdown menu.
 
 ## Select All
 
