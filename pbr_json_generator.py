@@ -9,8 +9,9 @@ import mobase
 
 try:
     from PyQt6.QtWidgets import (
-        QMessageBox, QDialog, QVBoxLayout, QLabel, QListWidget,
-        QListWidgetItem, QDialogButtonBox, QCheckBox, QLineEdit,
+        QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+        QLabel, QListWidget, QListWidgetItem, QDialogButtonBox,
+        QCheckBox, QLineEdit, QTabWidget, QDoubleSpinBox, QWidget,
     )
     from PyQt6.QtGui import QIcon
     from PyQt6.QtCore import Qt
@@ -23,8 +24,9 @@ try:
 except ImportError:
     try:
         from PyQt5.QtWidgets import (
-            QMessageBox, QDialog, QVBoxLayout, QLabel, QListWidget,
-            QListWidgetItem, QDialogButtonBox, QCheckBox, QLineEdit,
+            QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+            QLabel, QListWidget, QListWidgetItem, QDialogButtonBox,
+            QCheckBox, QLineEdit, QTabWidget, QDoubleSpinBox, QWidget,
         )
         from PyQt5.QtGui import QIcon
         from PyQt5.QtCore import Qt
@@ -37,8 +39,9 @@ except ImportError:
     except ImportError:
         try:
             from PySide2.QtWidgets import (
-                QMessageBox, QDialog, QVBoxLayout, QLabel, QListWidget,
-                QListWidgetItem, QDialogButtonBox, QCheckBox, QLineEdit,
+                QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
+                QLabel, QListWidget, QListWidgetItem, QDialogButtonBox,
+                QCheckBox, QLineEdit, QTabWidget, QDoubleSpinBox, QWidget,
             )
             from PySide2.QtGui import QIcon
             from PySide2.QtCore import Qt
@@ -203,6 +206,32 @@ except ImportError:
                 @property
                 def textChanged(self):
                     return _Signal()
+
+            class QTabWidget:
+                def __init__(self, parent=None): pass
+                def addTab(self, widget, label): pass
+
+            class QDoubleSpinBox:
+                def __init__(self, parent=None):
+                    self._value = 0.0
+                def setRange(self, min_val, max_val): pass
+                def setDecimals(self, decimals): pass
+                def setSingleStep(self, step): pass
+                def setValue(self, value): self._value = value
+                def value(self): return self._value
+                def setEnabled(self, enabled): pass
+
+            class QHBoxLayout:
+                def __init__(self, parent=None): pass
+                def addWidget(self, widget): pass
+
+            class QFormLayout:
+                def __init__(self, parent=None): pass
+                def addRow(self, *args): pass
+
+            class QWidget:
+                def __init__(self, parent=None): pass
+                def setLayout(self, layout): pass
 
             class QIcon:
                 pass
@@ -393,6 +422,225 @@ class PBRNifPatcherSelectionDialog(BaseModSelectionDialog):
         self._finish_layout()
 
 
+class PBRSettingsDialog(QDialog):
+    """Dialog for configuring which PBR JSON fields to include and their
+    default values.  Organised in tabs matching the PGPatcher wiki sections.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("PBR JSON Settings")
+        self.setMinimumWidth(550)
+        self.setMinimumHeight(600)
+
+        self._float_settings = {}   # key -> (QCheckBox, QDoubleSpinBox)
+        self._bool_settings = {}    # key -> (QCheckBox include, QCheckBox val)
+        self._color_settings = {}   # key -> (QCheckBox, [QDoubleSpinBox, ...])
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel(
+            "Configure which fields to include in generated JSON and "
+            "their default values.\nEmissive, parallax, subsurface, fuzz,"
+            " and coat are auto-detected from companion textures."
+        ))
+
+        tabs = QTabWidget()
+        layout.addWidget(tabs)
+        tabs.addTab(self._build_general_tab(), "General")
+        tabs.addTab(self._build_emissive_tab(), "Emissive")
+        tabs.addTab(self._build_parallax_tab(), "Parallax")
+        tabs.addTab(self._build_subsurface_tab(), "Subsurface")
+        tabs.addTab(self._build_coat_tab(), "Coat")
+        tabs.addTab(self._build_fuzz_tab(), "Fuzz")
+        tabs.addTab(self._build_extras_tab(), "Hair / Glint")
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    # -- Tab builders -------------------------------------------------------
+
+    def _build_general_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        self._add_float("specular_level", form, "Specular Level",
+                        0.04, 0, 10)
+        self._add_float("roughness_scale", form, "Roughness Scale",
+                        1.0, 0, 10)
+        self._add_float("smooth_angle", form, "Smooth Angle",
+                        75, 0, 180, decimals=1)
+        self._add_bool("subsurface_foliage", form, "Subsurface Foliage",
+                       False, True)
+        self._add_bool("vertex_colors", form, "Vertex Colors",
+                       True, False)
+        self._add_float("vertex_color_lum_mult", form,
+                        "Vertex Color Lum Mult", 1.0, 0, 10, included=False)
+        self._add_float("vertex_color_sat_mult", form,
+                        "Vertex Color Sat Mult", 1.0, 0, 10, included=False)
+        self._add_bool("zbuffer_write", form, "ZBuffer Write", True, False)
+        self._add_bool("auto_uv", form, "Auto UV", False, False)
+        self._add_float("uv_scale", form, "UV Scale",
+                        1.0, 0, 100, included=False)
+        return w
+
+    def _build_emissive_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        form.addRow(QLabel(
+            "Emissive is auto-detected from _g.dds textures."
+        ))
+        self._add_float("emissive_scale", form, "Emissive Scale",
+                        1.0, 0, 100, included=False)
+        self._add_color("emissive_color", form, "Emissive Color",
+                        (0, 0, 0, 0), included=False)
+        return w
+
+    def _build_parallax_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        form.addRow(QLabel(
+            "Parallax is auto-detected from _p.dds textures."
+        ))
+        self._add_float("displacement_scale", form, "Displacement Scale",
+                        1.0, 0, 10)
+        return w
+
+    def _build_subsurface_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        form.addRow(QLabel(
+            "Subsurface is auto-detected from _s.dds textures."
+        ))
+        self._add_color("subsurface_color", form, "Subsurface Color",
+                        (1, 1, 1))
+        self._add_float("subsurface_opacity", form, "Subsurface Opacity",
+                        1.0, 0, 1)
+        return w
+
+    def _build_coat_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        form.addRow(QLabel(
+            "Coat is auto-detected when both _cnr.dds and _s.dds exist."
+        ))
+        self._add_bool("coat_diffuse", form, "Coat Diffuse", True, True)
+        self._add_bool("coat_parallax", form, "Coat Parallax", True, True)
+        self._add_float("coat_strength", form, "Coat Strength",
+                        1.0, 0, 10)
+        self._add_float("coat_roughness", form, "Coat Roughness",
+                        1.0, 0, 10)
+        self._add_float("coat_specular_level", form,
+                        "Coat Specular Level", 0.018, 0, 1)
+        return w
+
+    def _build_fuzz_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        form.addRow(QLabel(
+            "Fuzz is auto-detected from _f.dds textures."
+        ))
+        self._add_color("fuzz_color", form, "Fuzz Color",
+                        (1, 1, 1), included=False)
+        self._add_float("fuzz_weight", form, "Fuzz Weight",
+                        1.0, 0, 10, included=False)
+        return w
+
+    def _build_extras_tab(self):
+        w = QWidget()
+        form = QFormLayout(w)
+        self._add_bool("hair", form, "Hair", False, False)
+        form.addRow(QLabel(""))
+        form.addRow(QLabel("Glint parameters (creates glint object):"))
+        self._add_float("glint_screen_space_scale", form,
+                        "Screen Space Scale", 1.0, 0, 100, included=False)
+        self._add_float("glint_log_microfacet_density", form,
+                        "Log Microfacet Density", 1.0, 0, 100, included=False)
+        self._add_float("glint_microfacet_roughness", form,
+                        "Microfacet Roughness", 1.0, 0, 100, included=False)
+        self._add_float("glint_density_randomization", form,
+                        "Density Randomization", 1.0, 0, 100, included=False)
+        return w
+
+    # -- Row helpers --------------------------------------------------------
+
+    def _add_float(self, key, form, label, default, min_val=0, max_val=100,
+                   decimals=3, included=True):
+        row = QHBoxLayout()
+        cb = QCheckBox()
+        cb.setChecked(included)
+        spin = QDoubleSpinBox()
+        spin.setRange(min_val, max_val)
+        spin.setDecimals(decimals)
+        spin.setSingleStep(0.01)
+        spin.setValue(default)
+        spin.setEnabled(included)
+        cb.clicked.connect(
+            lambda _=None, s=spin, c=cb: s.setEnabled(c.isChecked())
+        )
+        row.addWidget(cb)
+        row.addWidget(spin)
+        form.addRow(label, row)
+        self._float_settings[key] = (cb, spin)
+
+    def _add_bool(self, key, form, label, default=False, included=False):
+        row = QHBoxLayout()
+        include_cb = QCheckBox("Include")
+        include_cb.setChecked(included)
+        value_cb = QCheckBox("Enabled")
+        value_cb.setChecked(default)
+        value_cb.setEnabled(included)
+        include_cb.clicked.connect(
+            lambda _=None, v=value_cb, i=include_cb:
+                v.setEnabled(i.isChecked())
+        )
+        row.addWidget(include_cb)
+        row.addWidget(value_cb)
+        form.addRow(label, row)
+        self._bool_settings[key] = (include_cb, value_cb)
+
+    def _add_color(self, key, form, label, default, included=True):
+        row = QHBoxLayout()
+        cb = QCheckBox()
+        cb.setChecked(included)
+        row.addWidget(cb)
+        channels = "RGBA" if len(default) == 4 else "RGB"
+        spins = []
+        for ch, val in zip(channels, default):
+            row.addWidget(QLabel(ch))
+            spin = QDoubleSpinBox()
+            spin.setRange(0, 1)
+            spin.setDecimals(3)
+            spin.setValue(val)
+            spin.setEnabled(included)
+            cb.clicked.connect(
+                lambda _=None, s=spin, c=cb: s.setEnabled(c.isChecked())
+            )
+            row.addWidget(spin)
+            spins.append(spin)
+        form.addRow(label, row)
+        self._color_settings[key] = (cb, spins)
+
+    # -- Public API ---------------------------------------------------------
+
+    def get_settings(self):
+        """Return ``{field: value}`` for every included setting."""
+        result = {}
+        for key, (cb, spin) in self._float_settings.items():
+            if cb.isChecked():
+                result[key] = spin.value()
+        for key, (include_cb, value_cb) in self._bool_settings.items():
+            if include_cb.isChecked():
+                result[key] = value_cb.isChecked()
+        for key, (cb, spins) in self._color_settings.items():
+            if cb.isChecked():
+                result[key] = [s.value() for s in spins]
+        return result
+
+
 # ---------------------------------------------------------------------------
 # Plugin
 # ---------------------------------------------------------------------------
@@ -493,7 +741,15 @@ class PBRJsonGenerator(mobase.IPluginTool):
         else:
             selected = dialog.get_selected_mods()
             rename = dialog.is_rename_enabled()
-            self._handle_generate_new(mods_path, selected, rename)
+
+            settings_dialog = PBRSettingsDialog(self.__parent_widget)
+            if settings_dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+            settings = settings_dialog.get_settings()
+
+            self._handle_generate_new(
+                mods_path, selected, rename, settings
+            )
 
         try:
             self.__organizer.refresh(True)
@@ -674,7 +930,8 @@ class PBRJsonGenerator(mobase.IPluginTool):
 
     # -- Generate new JSONs ---------------------------------------------------
 
-    def _handle_generate_new(self, mods_path, selected, rename_enabled):
+    def _handle_generate_new(self, mods_path, selected, rename_enabled,
+                             settings):
         if not selected:
             QMessageBox.information(
                 self.__parent_widget,
@@ -754,27 +1011,74 @@ class PBRJsonGenerator(mobase.IPluginTool):
                             f"Renamed: {texture_str} -> {renamed}"
                         )
 
+                # Auto-detected features
                 entry["emissive"] = glow
                 entry["parallax"] = parallax
                 entry["subsurface"] = subsurface
-                entry["subsurface_foliage"] = False
-                entry["specular_level"] = 0.04
-                entry["subsurface_color"] = [1, 1, 1]
-                entry["roughness_scale"] = 1
-                entry["subsurface_opacity"] = 1
-                entry["smooth_angle"] = 75
-                entry["displacement_scale"] = 1
 
+                # User-configured general settings
+                for key in ("specular_level", "roughness_scale",
+                            "smooth_angle", "subsurface_foliage",
+                            "vertex_colors", "vertex_color_lum_mult",
+                            "vertex_color_sat_mult", "zbuffer_write",
+                            "auto_uv", "uv_scale"):
+                    if key in settings:
+                        entry[key] = settings[key]
+
+                # Emissive extras (only when detected)
+                if glow:
+                    for key in ("emissive_scale", "emissive_color"):
+                        if key in settings:
+                            entry[key] = settings[key]
+
+                # Parallax extras (only when detected)
+                if parallax:
+                    if "displacement_scale" in settings:
+                        entry["displacement_scale"] = (
+                            settings["displacement_scale"]
+                        )
+
+                # Subsurface extras (only when detected)
+                if subsurface:
+                    for key in ("subsurface_color", "subsurface_opacity"):
+                        if key in settings:
+                            entry[key] = settings[key]
+
+                # Fuzz or Coat (mutually exclusive, fuzz wins)
                 if fuzz:
-                    entry["fuzz"] = {"texture": True}
+                    fuzz_obj = {"texture": True}
+                    if "fuzz_color" in settings:
+                        fuzz_obj["color"] = settings["fuzz_color"]
+                    if "fuzz_weight" in settings:
+                        fuzz_obj["weight"] = settings["fuzz_weight"]
+                    entry["fuzz"] = fuzz_obj
                 elif subsurface and cnr:
-                    entry["multilayer"] = True
-                    entry["coat_diffuse"] = True
                     entry["coat_normal"] = True
-                    entry["coat_parallax"] = True
-                    entry["coat_strength"] = 1.0
-                    entry["coat_roughness"] = 1.0
-                    entry["coat_specular_level"] = 0.018
+                    for key in ("coat_diffuse", "coat_parallax",
+                                "coat_strength", "coat_roughness",
+                                "coat_specular_level"):
+                        if key in settings:
+                            entry[key] = settings[key]
+
+                # Hair
+                if "hair" in settings:
+                    entry["hair"] = settings["hair"]
+
+                # Glint
+                _glint_map = {
+                    "glint_screen_space_scale": "screen_space_scale",
+                    "glint_log_microfacet_density":
+                        "log_microfacet_density",
+                    "glint_microfacet_roughness": "microfacet_roughness",
+                    "glint_density_randomization":
+                        "density_randomization",
+                }
+                _glint = {}
+                for s_key, j_key in _glint_map.items():
+                    if s_key in settings:
+                        _glint[j_key] = settings[s_key]
+                if _glint:
+                    entry["glint"] = _glint
 
                 with open(json_path, "w", encoding="utf-8") as f:
                     json.dump([entry], f, indent=4)
